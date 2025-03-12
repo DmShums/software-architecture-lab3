@@ -23,34 +23,32 @@ class FacadeController:
         new_uuid = str(uuid.uuid4())
         message = {"id": new_uuid, "text": data.text}
 
-        fall_back_ctr = 0
+        shuffled_services = random.sample(FacadeController.logging_service_urls, len(FacadeController.logging_service_urls))
+        
         async with httpx.AsyncClient() as client:
-            while fall_back_ctr < len(FacadeController.logging_service_urls):
+            for selected_service in shuffled_services:
                 try:
-                    selected_service = random.choice(FacadeController.logging_service_urls)
                     response = await client.post(selected_service, json=message)
                     response.raise_for_status()
                     return {"status": "Message logged", "message_id": new_uuid}
                 except httpx.RequestError as e:
                     print(f"Request to {selected_service} failed: {e}")
-                    fall_back_ctr += 1
                     await asyncio.sleep(1)
 
         return {"error": "All logging services are unavailable."}
 
     @facade_service.get("/facade-service")
     async def get_request():
-        fall_back_ctr = 0
+        shuffled_services = random.sample(FacadeController.logging_service_urls, len(FacadeController.logging_service_urls))
+
         async with httpx.AsyncClient() as client:
-            while fall_back_ctr < len(FacadeController.logging_service_urls):
+            for selected_service in shuffled_services:
                 try:
-                    selected_service = random.choice(FacadeController.logging_service_urls)
                     logging_response = await client.get(selected_service)
                     logging_response.raise_for_status()
                     return logging_response.json()
                 except httpx.RequestError as e:
                     print(f"Request to {selected_service} failed: {e}")
-                    fall_back_ctr += 1
                     await asyncio.sleep(1)
 
         return {"error": "All logging services are unavailable."}
