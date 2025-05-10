@@ -23,3 +23,12 @@ Next, we terminate two logging-service instances at once.
 ### Step: 6
 As a result, we can observe visible data loss.
 <img src="images/6.png">
+
+# Additional
+In my `config_server.py` facade-service will query to discover all active instances of any microservice by name.
+
+Let's try config server
+<img src="images/additional1.png">
+
+Here we can see that adresses are changed dynamically
+<img src="images/additional2.png">

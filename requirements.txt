@@ -4,3 +4,4 @@ uvicorn
 requests
 grpcio
 grpcio-tools
+dotenv

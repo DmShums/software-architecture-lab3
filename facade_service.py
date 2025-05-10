@@ -1,54 +1,76 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
+import os
 import uuid
-import httpx
 import random
 import asyncio
 
-facade_service = FastAPI()
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+import httpx
+from dotenv import load_dotenv
+
+load_dotenv(override=True)
+
+FACade = FastAPI()
+
+CONFIG_SERVER_URL = os.getenv("CONFIG_SERVER_URL", "http://127.0.0.1:8005")
 
 class RequestModel(BaseModel):
     text: str
 
-class FacadeController:
-    """Facade controller class"""
-    logging_service_urls = [
-        "http://127.0.0.1:8002/logging-service",
-        "http://127.0.0.1:8003/logging-service",
-        "http://127.0.0.1:8004/logging-service"
-    ]
+async def fetch_instances(service_name: str) -> list[str]:
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(f"{CONFIG_SERVER_URL}/services/{service_name}")
+        resp.raise_for_status()
+        return resp.json()["instances"]
 
-    @facade_service.post("/facade-service")
-    async def post_request(data: RequestModel):
-        new_uuid = str(uuid.uuid4())
-        message = {"id": new_uuid, "text": data.text}
+@FACade.post("/facade-service")
+async def post_request(data: RequestModel):
+    new_uuid = str(uuid.uuid4())
+    payload = {"id": new_uuid, "text": data.text}
 
-        shuffled_services = random.sample(FacadeController.logging_service_urls, len(FacadeController.logging_service_urls))
-        
-        async with httpx.AsyncClient() as client:
-            for selected_service in shuffled_services:
-                try:
-                    response = await client.post(selected_service, json=message)
-                    response.raise_for_status()
-                    return {"status": "Message logged", "message_id": new_uuid}
-                except httpx.RequestError as e:
-                    print(f"Request to {selected_service} failed: {e}")
-                    await asyncio.sleep(1)
+    # Discover all logging-service instances
+    try:
+        instances = await fetch_instances("logging-service")
+    except httpx.HTTPError:
+        raise HTTPException(503, "Config-server unavailable")
 
-        return {"error": "All logging services are unavailable."}
+    # Shuffle for basic load-balancing
+    for url in random.sample(instances, len(instances)):
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(url, json=payload, timeout=2.0)
+                resp.raise_for_status()
+                return {"status": "Message logged", "message_id": new_uuid}
+        except httpx.RequestError:
+            # could log here: f"Failed to reach {url}"
+            await asyncio.sleep(1)
 
-    @facade_service.get("/facade-service")
-    async def get_request():
-        shuffled_services = random.sample(FacadeController.logging_service_urls, len(FacadeController.logging_service_urls))
+    raise HTTPException(503, "All logging instances unreachable")
 
-        async with httpx.AsyncClient() as client:
-            for selected_service in shuffled_services:
-                try:
-                    logging_response = await client.get(selected_service)
-                    logging_response.raise_for_status()
-                    return logging_response.json()
-                except httpx.RequestError as e:
-                    print(f"Request to {selected_service} failed: {e}")
-                    await asyncio.sleep(1)
+@FACade.get("/facade-service")
+async def get_request():
+    # Discover logging instances
+    try:
+        instances = await fetch_instances("logging-service")
+    except httpx.HTTPError:
+        raise HTTPException(503, "Config-server unavailable")
 
-        return {"error": "All logging services are unavailable."}
+    for url in random.sample(instances, len(instances)):
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(url, timeout=2.0)
+                resp.raise_for_status()
+                logs = resp.json()
+                # Now get the static message
+                msg_instances = await fetch_instances("message-service")
+                msg_url = random.choice(msg_instances)
+                msg_resp = await client.get(msg_url, timeout=2.0)
+                msg_resp.raise_for_status()
+                return {
+                    "logged_messages": logs.get("messages") or logs,
+                    "message": msg_resp.json()["message"],
+                }
+        except httpx.RequestError:
+            await asyncio.sleep(1)
+
+    raise HTTPException(503, "All logging instances unreachable")
